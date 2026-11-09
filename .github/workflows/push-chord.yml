@@ -25,4 +25,8 @@ jobs:
         env:
           TRMNL_WEBHOOK_URL: ${{ secrets.TRMNL_WEBHOOK_URL }}
         run: |
-          docker compose run --rm trmnl-guitar-webhook python3 trmnl_chord_webhook.py --once
+          if [ -z "$TRMNL_WEBHOOK_URL" ]; then
+            echo "Error: Secret TRMNL_WEBHOOK_URL is empty or not set in GitHub Actions Secrets!"
+            exit 1
+          fi
+          docker compose run --rm -e TRMNL_WEBHOOK_URL="$TRMNL_WEBHOOK_URL" trmnl-guitar-webhook python3 trmnl_chord_webhook.py --once
