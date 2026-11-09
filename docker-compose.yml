@@ -6,7 +6,7 @@ services:
     volumes:
       - ./:/app
     environment:
-      - TRMNL_WEBHOOK_URL=https://trmnl.com/api/custom_plugins/YOUR_PLUGIN_UUID_HERE
+      - TRMNL_WEBHOOK_URL=https://trmnl.com/api/custom_plugins/ea5b672f-aaf1-43a3-b9bc-53e695e165db
       - PUSH_INTERVAL_SECONDS=1800
       - PORT=8085
     ports:
