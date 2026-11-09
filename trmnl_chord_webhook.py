@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TRMNL Guitar Chord Webhook Server
+TRMNL Guitar Chord Webhook Server (Fixed & Root-Aligned)
 Uses GitHub project: https://github.com/tombatossals/chords-db
 Pushes {"merge_variables": ...} to TRMNL's Custom Plugin Webhook URL.
 """
@@ -8,6 +8,7 @@ Pushes {"merge_variables": ...} to TRMNL's Custom Plugin Webhook URL.
 import json
 import os
 import random
+import sys
 import threading
 import time
 import urllib.error
@@ -18,16 +19,22 @@ from pathlib import Path
 # --- Configuration via Environment Variables ---
 TRMNL_WEBHOOK_URL = os.environ.get(
     "TRMNL_WEBHOOK_URL",
-    "https://trmnl.com/api/custom_plugins/ea5b672f-aaf1-43a3-b9bc-53e695e165db"
+    "https://trmnl.com/api/custom_plugins/YOUR_PLUGIN_UUID_HERE"
 )
-# Default: Push a new chord every 30 minutes (1800 seconds).
-# Note: TRMNL standard rate limit is 12 pushes/hour (min 300s interval).
 PUSH_INTERVAL_SECONDS = int(os.environ.get("PUSH_INTERVAL_SECONDS", "1800"))
 PORT = int(os.environ.get("PORT", "8085"))
 CACHE_FILE = Path(os.environ.get("CACHE_FILE", "./guitar.json"))
 
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/tombatossals/chords-db/master/lib/guitar.json"
-NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+
+SHARP_NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+FLAT_NOTES  = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+
+KEY_TO_SEMITONE = {
+    "C": 0, "C#": 1, "Db": 1, "D": 2, "D#": 3, "Eb": 3,
+    "E": 4, "F": 5, "F#": 6, "Gb": 6, "G": 7, "G#": 8,
+    "Ab": 8, "A": 9, "A#": 10, "Bb": 10, "B": 11
+}
 
 # --- Music Theory, Intervals & Style Knowledge Base ---
 THEORY_CATALOG = {
@@ -164,64 +171,75 @@ def load_github_chords_db():
     return CHORDS_DB
 
 
+def pick_note_spelling(key_display, suffix):
+    """Returns flat or sharp note array based on key signature and chord quality."""
+    flat_keys = {"F", "Bb", "Eb", "Ab", "Db", "Gb"}
+    if "b" in key_display or "b" in suffix or key_display in flat_keys or suffix in {"minor", "m7", "m9", "7", "9", "dim7", "m7b5"}:
+        if "#" not in key_display:
+            return FLAT_NOTES
+    return SHARP_NOTES
+
+
 def generate_compact_svg(position):
     """
-    Generates a minified, 1-bit e-ink optimized SVG fretboard card (<1KB)
-    so the total webhook payload stays well under TRMNL's 5KB limit.
+    Generates a crisp, 1-bit e-ink optimized SVG fretboard card (250x265)
+    with centered barres and finger dots, staying well under TRMNL's 5KB limit.
     """
     frets = position["frets"]
     fingers = position["fingers"]
     barres = position.get("barres", [])
     base_fret = position.get("baseFret", 1)
 
-    w, h = 230, 250
-    left, top = 40, 32
-    gw, gh = 160, 192
-    dx = gw / 5.0
-    dy = gh / 4.0
+    w, h = 250, 265
+    left, top = 46, 36
+    gw, gh = 175, 208
+    dx = gw / 5.0   # 35px between strings
+    dy = gh / 4.0   # 52px per fret
 
-    parts = [f'<svg viewBox="0 0 {w} {h}" width="220" height="240" xmlns="http://www.w3.org/2000/svg">']
+    parts = [f'<svg viewBox="0 0 {w} {h}" width="250" height="265" xmlns="http://www.w3.org/2000/svg">']
 
-    # Nut
-    nut_w = 7 if base_fret == 1 else 2
-    parts.append(f'<line x1="{left}" y1="{top}" x2="{left+gw}" y2="{top}" stroke="#000" stroke-width="{nut_w}"/>')
+    # Top Nut (thick bar if base_fret == 1, regular line if higher up the neck)
+    nut_w = 7 if base_fret == 1 else 2.5
+    parts.append(f'<line x1="{left}" y1="{top}" x2="{left+gw}" y2="{top}" stroke="#000" stroke-width="{nut_w}" stroke-linecap="square"/>')
 
+    # Base fret indicator on the left of Fret 1
     if base_fret > 1:
-        parts.append(f'<text x="{left-10}" y="{top+dy/2+5}" font-family="monospace" font-size="15" font-weight="bold" text-anchor="end">{base_fret}fr</text>')
+        y_label = int(top + dy * 0.5 + 6)
+        parts.append(f'<text x="{left-12}" y="{y_label}" font-family="monospace" font-size="16" font-weight="bold" text-anchor="end" fill="#000">{base_fret}fr</text>')
 
-    # Frets
+    # 4 Horizontal Fret Wires
     for i in range(1, 5):
         y = int(top + i * dy)
         parts.append(f'<line x1="{left}" y1="{y}" x2="{left+gw}" y2="{y}" stroke="#000" stroke-width="2"/>')
 
-    # Strings
+    # 6 Vertical Guitar Strings (heavier gauge on low E/A)
     for s in range(6):
         x = int(left + s * dx)
-        sw = 2.5 if s < 2 else 1.8
+        sw = 2.6 if s < 2 else (2.0 if s < 4 else 1.5)
         parts.append(f'<line x1="{x}" y1="{top}" x2="{x}" y2="{top+gh}" stroke="#000" stroke-width="{sw}"/>')
 
-    # Barres
+    # Draw Barre Chords (centered vertically inside the fret space)
     for bf in barres:
         bs = [i for i, f in enumerate(frets) if f >= bf]
         if len(bs) >= 2:
             x1 = int(left + min(bs) * dx)
             x2 = int(left + max(bs) * dx)
-            y = int(top + (bf - 0.5) * dy)
-            parts.append(f'<rect x="{x1-10}" y="{y-10}" width="{x2-x1+20}" height="20" rx="10" fill="#000"/>')
+            y_center = int(top + (bf - 0.5) * dy)
+            parts.append(f'<rect x="{x1-12}" y="{y_center-12}" width="{x2-x1+24}" height="24" rx="12" fill="#000"/>')
 
-    # Fingers & Open/Muted strings
+    # Draw Individual Finger Dots & Open/Muted String Symbols
     for s, f in enumerate(frets):
         x = int(left + s * dx)
         fn = fingers[s] if s < len(fingers) else 0
         if f == -1:
-            parts.append(f'<text x="{x}" y="{top-10}" font-family="sans-serif" font-size="18" font-weight="900" text-anchor="middle">×</text>')
+            parts.append(f'<text x="{x}" y="{top-12}" font-family="sans-serif" font-size="19" font-weight="900" text-anchor="middle" fill="#000">×</text>')
         elif f == 0:
-            parts.append(f'<circle cx="{x}" cy="{top-16}" r="6" stroke="#000" stroke-width="2.5" fill="#fff"/>')
+            parts.append(f'<circle cx="{x}" cy="{top-18}" r="7" stroke="#000" stroke-width="2.5" fill="#fff"/>')
         else:
-            y = int(top + (f - 0.5) * dy)
-            parts.append(f'<circle cx="{x}" cy="{y}" r="11" fill="#000"/>')
+            y_center = int(top + (f - 0.5) * dy)
+            parts.append(f'<circle cx="{x}" cy="{y_center}" r="12" fill="#000"/>')
             if fn > 0:
-                parts.append(f'<text x="{x}" y="{y+5}" font-family="sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#fff">{fn}</text>')
+                parts.append(f'<text x="{x}" y="{y_center+5}" font-family="sans-serif" font-size="14" font-weight="bold" text-anchor="middle" fill="#fff">{fn}</text>')
 
     parts.append("</svg>")
     return "".join(parts)
@@ -244,6 +262,8 @@ def build_webhook_payload():
 
     key_display = chord["key"]
     suffix = chord["suffix"]
+    note_names = pick_note_spelling(key_display, suffix)
+
     meta = THEORY_CATALOG.get(suffix, {
         "title": f"{suffix.upper()} Chord",
         "family": "Extended / Altered",
@@ -253,16 +273,17 @@ def build_webhook_payload():
         "theory": f"Specialized {suffix} voicing from tombatossals/chords-db adding upper-structure color or altered harmonic tension."
     })
 
+    # Sort chord tones chromatically starting from the root note so it matches INTERVAL FORMULA order
     midi_vals = pos.get("midi", [])
-    pitch_classes = []
-    for m in midi_vals:
-        n = NOTE_NAMES[m % 12]
-        if n not in pitch_classes:
-            pitch_classes.append(n)
+    root_semi = KEY_TO_SEMITONE.get(key_display, 0)
+    unique_semis = sorted({m % 12 for m in midi_vals}, key=lambda s: (s - root_semi) % 12)
+    pitch_classes = [note_names[s] for s in unique_semis]
 
+    # Active finger numbers
     used_fingers = sorted({f for f in pos.get("fingers", []) if f > 0})
     fingers_label = ", ".join(str(f) for f in used_fingers) if used_fingers else "Open"
 
+    # Per-string notes from low E (string 6) to high E (string 1)
     standard_midi = [40, 45, 50, 55, 59, 64]
     base_fret = pos.get("baseFret", 1)
     string_notes = []
@@ -270,10 +291,10 @@ def build_webhook_payload():
         if f_val == -1:
             string_notes.append("X")
         elif f_val == 0:
-            string_notes.append(NOTE_NAMES[standard_midi[s_idx] % 12])
+            string_notes.append(note_names[standard_midi[s_idx] % 12])
         else:
             actual = (base_fret + f_val - 1) if base_fret > 1 else f_val
-            string_notes.append(NOTE_NAMES[(standard_midi[s_idx] + actual) % 12])
+            string_notes.append(note_names[(standard_midi[s_idx] + actual) % 12])
 
     chord_label = f"{key_display}{'' if suffix == 'major' else ('m' if suffix == 'minor' else suffix)}"
 
@@ -308,7 +329,7 @@ def push_to_trmnl():
 
     print(f"[WEBHOOK] Pushing '{chord_name}' ({len(body)} bytes) -> {TRMNL_WEBHOOK_URL}")
 
-    if "YOUR_PLUGIN_UUID_HERE" in TRMNL_WEBHOOK_URL:
+    if "YOUR_PLUGIN_UUID_HERE" in TRMNL_WEBHOOK_URL or not TRMNL_WEBHOOK_URL.strip():
         print("[WARN] TRMNL_WEBHOOK_URL is not configured yet! Skipping HTTP POST.")
         return False, "Missing TRMNL_WEBHOOK_URL", payload
 
@@ -387,13 +408,14 @@ class WebhookControlHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    import sys
     load_github_chords_db()
+
+    # Single-run mode for GitHub Actions / cron jobs
     if "--once" in sys.argv:
-        ok, msg, _ = push_to_trmnl()
+        ok, _, _ = push_to_trmnl()
         sys.exit(0 if ok else 1)
-    load_github_chords_db()
-    # Start background webhook pusher thread
+
+    # Continuous daemon mode for self-hosted Docker Compose
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
 
