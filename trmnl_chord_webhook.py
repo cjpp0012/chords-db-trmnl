@@ -18,7 +18,7 @@ from pathlib import Path
 # --- Configuration via Environment Variables ---
 TRMNL_WEBHOOK_URL = os.environ.get(
     "TRMNL_WEBHOOK_URL",
-    "https://trmnl.com/api/custom_plugins/YOUR_PLUGIN_UUID_HERE"
+    "https://trmnl.com/api/custom_plugins/ea5b672f-aaf1-43a3-b9bc-53e695e165db"
 )
 # Default: Push a new chord every 30 minutes (1800 seconds).
 # Note: TRMNL standard rate limit is 12 pushes/hour (min 300s interval).
