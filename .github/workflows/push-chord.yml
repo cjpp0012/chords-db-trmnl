@@ -1,0 +1,28 @@
+name: Push Guitar Chord to TRMNL
+
+on:
+  schedule:
+    # Runs every 30 minutes
+    - cron: "*/30 * * * *"
+  workflow_dispatch:      # Adds a "Run workflow" button in the GitHub UI
+  repository_dispatch:    # Allows external HTTP webhook POSTs to trigger a run
+    types: [refresh_chord]
+
+jobs:
+  run-chord-container:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache tombatossals/chords-db guitar.json
+        uses: actions/cache@v4
+        with:
+          path: ./guitar.json
+          key: chords-db-v1
+
+      - name: Run container via Docker Compose to push webhook
+        env:
+          TRMNL_WEBHOOK_URL: ${{ secrets.TRMNL_WEBHOOK_URL }}
+        run: |
+          docker compose run --rm trmnl-guitar-webhook python3 trmnl_chord_webhook.py --once
