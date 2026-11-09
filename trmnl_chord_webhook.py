@@ -387,6 +387,11 @@ class WebhookControlHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    import sys
+    load_github_chords_db()
+    if "--once" in sys.argv:
+        ok, msg, _ = push_to_trmnl()
+        sys.exit(0 if ok else 1)
     load_github_chords_db()
     # Start background webhook pusher thread
     t = threading.Thread(target=scheduler_loop, daemon=True)
