@@ -1,0 +1,15 @@
+services:
+  trmnl-guitar-webhook:
+    image: python:3.12-alpine
+    container_name: trmnl-guitar-webhook
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      - TRMNL_WEBHOOK_URL=https://trmnl.com/api/custom_plugins/YOUR_PLUGIN_UUID_HERE
+      - PUSH_INTERVAL_SECONDS=1800
+      - PORT=8085
+    ports:
+      - "8085:8085"
+    command: ["python3", "-u", "trmnl_chord_webhook.py"]
+    restart: unless-stopped
